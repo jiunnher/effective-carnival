@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Effective Carnival</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="no-js">
+  <header class="site-header">
+    <div class="branding">
+      <a href="#" class="logo">Effective Carnival</a>
+      <p class="tagline">An accessible navigation demo</p>
+    </div>
+    <button class="nav-toggle" type="button" aria-expanded="true" aria-controls="primary-navigation">
+      <span class="toggle-label">Menu</span>
+      <span class="toggle-icon" aria-hidden="true"></span>
+    </button>
+    <nav id="primary-navigation" class="primary-nav" data-open="true" aria-label="Primary navigation" aria-hidden="false">
+      <ul>
+        <li><a href="#">Home</a></li>
+        <li><a href="#">About</a></li>
+        <li><a href="#">Schedule</a></li>
+        <li><a href="#">Tickets</a></li>
+        <li><a href="#">Contact</a></li>
+      </ul>
+    </nav>
+  </header>
+  <main class="content">
+    <h1>Welcome to Effective Carnival</h1>
+    <p>
+      This example showcases a navigation menu that remains accessible without JavaScript while
+      gracefully enhancing behaviour when scripting is available.
+    </p>
+    <p>
+      Resize the browser window below 900px wide to view the mobile layout. With JavaScript
+      enabled, the menu collapses into a toggle that slides in and out. When JavaScript is
+      disabled, the links stay visible so visitors can always reach every page.
+    </p>
+  </main>
+  <script src="script.js" defer></script>
+</body>
+</html>
