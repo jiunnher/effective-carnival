@@ -157,13 +157,7 @@ body {
     font-size: 1.1rem;
   }
 
-  /* With no JavaScript we keep the navigation visible for accessibility */
-  .primary-nav[data-open="true"] {
-    opacity: 1;
-    visibility: visible;
-    transform: translateY(0);
-  }
-
+  /* Hide the menu only when scripting is active */
   .has-js .primary-nav[data-open="false"] {
     opacity: 0;
     visibility: hidden;

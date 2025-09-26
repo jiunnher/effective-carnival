@@ -1,5 +1,11 @@
 (function () {
   const body = document.body;
+
+  if (!body) {
+    return;
+  }
+
+  // Flag scripting support so CSS can collapse the menu only after JS boots.
   body.classList.remove('no-js');
   body.classList.add('has-js');
 
@@ -8,6 +14,10 @@
 
   if (!nav || !toggle) {
     return;
+  }
+
+  if (!nav.dataset.open) {
+    nav.dataset.open = 'true';
   }
 
   const closeMenu = () => {
