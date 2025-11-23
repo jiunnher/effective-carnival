@@ -21,6 +21,29 @@ const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/
 const MIN_TEXT_LENGTH = 10; // Minimum characters to consider OCR successful
 const MIN_REQUIRED_FIELDS = 1; // Minimum fields (amount, date, merchant) to extract
 
+/**
+ * Check if device has internet connectivity
+ */
+async function hasInternetConnection(): Promise<boolean> {
+  try {
+    // Try a quick HEAD request to Google (reliable and fast)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+
+    const response = await fetch('https://www.google.com/generate_204', {
+      method: 'HEAD',
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    clearTimeout(timeoutId);
+    return response.ok;
+  } catch (error) {
+    // Network error = offline
+    return false;
+  }
+}
+
 export interface OCRResult {
   text: string;
   confidence: number;
@@ -46,6 +69,9 @@ export interface ParsedReceipt {
   suggestedCategories?: string[]; // Alternative suggestions if uncertain
   confidence?: 'high' | 'medium' | 'low'; // Classification confidence
   ocrMethod?: 'device' | 'cloud'; // Track which method was used
+  classificationMethod?: 'ai' | 'keyword' | 'offline'; // How category was determined
+  needsAiReview?: boolean; // True if classified offline, needs AI review when online
+  rawText?: string; // Store raw OCR text for later re-classification
 }
 
 /**
@@ -633,19 +659,36 @@ export async function parseReceiptText(ocrResult: OCRResult): Promise<ParsedRece
   }
 
   // Category classification
-  // Strategy: Try Gemini AI classification first for better accuracy
-  // Fall back to keywords if Gemini fails or API key not configured
+  // Strategy: Check internet → Try AI → Fall back to keywords
+  // Store raw text for later re-classification when online
 
   let geminiClassification: { category?: string; confidence: 'high' | 'medium' | 'low' } | null = null;
+  const isOnline = await hasInternetConnection();
+
+  // Store raw text for potential re-classification
+  parsed.rawText = ocrResult.text;
 
   // If Gemini already classified during vision OCR, use that
   if (ocrResult.geminiCategory && ocrResult.geminiCategoryConfidence === 'high') {
     parsed.category = ocrResult.geminiCategory;
     parsed.confidence = 'high';
     parsed.suggestedCategories = [];
+    parsed.classificationMethod = 'ai';
+    parsed.needsAiReview = false;
+  } else if (!isOnline || !GEMINI_API_KEY) {
+    // OFFLINE MODE or NO API KEY: Use keywords immediately, mark for AI review later
+    console.log('[Classification] Offline or no API key - using keyword classification');
+    const keywordClassification = classifyReceipt(text, parsed.merchantName || '');
+
+    parsed.category = keywordClassification.category;
+    parsed.suggestedCategories = keywordClassification.suggested;
+    parsed.confidence = keywordClassification.confidence;
+    parsed.classificationMethod = 'offline';
+    parsed.needsAiReview = true; // Flag for background re-classification when online
+
+    console.log('[Classification] ⚠️ Classified offline, will re-classify when internet available');
   } else {
-    // Try Gemini text classification (cheaper than vision, smarter than keywords)
-    // This runs even if on-device OCR was used
+    // ONLINE MODE: Try Gemini AI classification
     try {
       geminiClassification = await classifyWithGemini(text, parsed.merchantName || '');
 
@@ -654,6 +697,8 @@ export async function parseReceiptText(ocrResult: OCRResult): Promise<ParsedRece
         parsed.category = geminiClassification.category;
         parsed.confidence = 'high';
         parsed.suggestedCategories = [];
+        parsed.classificationMethod = 'ai';
+        parsed.needsAiReview = false;
       } else {
         // Medium/low confidence or no category - combine with keyword classification
         const keywordClassification = classifyReceipt(text, parsed.merchantName || '');
@@ -661,6 +706,8 @@ export async function parseReceiptText(ocrResult: OCRResult): Promise<ParsedRece
         // Use Gemini's category if available, otherwise keyword
         parsed.category = geminiClassification.category || keywordClassification.category;
         parsed.confidence = geminiClassification.confidence || keywordClassification.confidence;
+        parsed.classificationMethod = geminiClassification.category ? 'ai' : 'keyword';
+        parsed.needsAiReview = false; // Already used AI (even if medium confidence)
 
         // Combine suggestions
         parsed.suggestedCategories = [
@@ -673,11 +720,13 @@ export async function parseReceiptText(ocrResult: OCRResult): Promise<ParsedRece
       }
     } catch (error) {
       // Gemini classification failed - fall back to keywords
-      console.log('[Classification] Gemini failed, using keywords');
+      console.log('[Classification] AI classification failed, using keywords');
       const classification = classifyReceipt(text, parsed.merchantName || '');
       parsed.category = classification.category;
       parsed.suggestedCategories = classification.suggested;
       parsed.confidence = classification.confidence;
+      parsed.classificationMethod = 'keyword';
+      parsed.needsAiReview = true; // Mark for retry when network is stable
     }
   }
 
@@ -687,6 +736,97 @@ export async function parseReceiptText(ocrResult: OCRResult): Promise<ParsedRece
   }
 
   return parsed;
+}
+
+/**
+ * Re-classify a receipt that was classified offline
+ * Use this when device comes back online to improve accuracy
+ */
+export async function reclassifyReceipt(
+  rawText: string,
+  merchantName: string,
+  currentCategory?: string
+): Promise<{ category?: string; confidence: 'high' | 'medium' | 'low'; changed: boolean } | null> {
+  try {
+    // Check if we're online now
+    const isOnline = await hasInternetConnection();
+
+    if (!isOnline || !GEMINI_API_KEY) {
+      console.log('[Re-classification] Still offline or no API key');
+      return null;
+    }
+
+    // Try AI classification
+    const aiClassification = await classifyWithGemini(rawText, merchantName);
+
+    if (aiClassification.category) {
+      const changed = aiClassification.category !== currentCategory;
+
+      if (changed) {
+        console.log(
+          `[Re-classification] ✅ Updated: ${currentCategory} → ${aiClassification.category} (${aiClassification.confidence})`
+        );
+      } else {
+        console.log(`[Re-classification] ✓ Confirmed: ${aiClassification.category} (${aiClassification.confidence})`);
+      }
+
+      return {
+        category: aiClassification.category,
+        confidence: aiClassification.confidence,
+        changed,
+      };
+    }
+
+    return null;
+  } catch (error) {
+    console.error('[Re-classification] Failed:', error);
+    return null;
+  }
+}
+
+/**
+ * Batch re-classify multiple receipts
+ * Call this when app comes online or in background
+ */
+export async function reclassifyPendingReceipts(
+  receipts: Array<{
+    id: string;
+    rawText: string;
+    merchantName: string;
+    currentCategory?: string;
+  }>
+): Promise<
+  Array<{
+    id: string;
+    newCategory?: string;
+    confidence?: 'high' | 'medium' | 'low';
+    changed: boolean;
+  }>
+> {
+  const results = [];
+
+  for (const receipt of receipts) {
+    const result = await reclassifyReceipt(receipt.rawText, receipt.merchantName, receipt.currentCategory);
+
+    if (result) {
+      results.push({
+        id: receipt.id,
+        newCategory: result.category,
+        confidence: result.confidence,
+        changed: result.changed,
+      });
+    } else {
+      results.push({
+        id: receipt.id,
+        changed: false,
+      });
+    }
+
+    // Small delay to avoid rate limiting
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  return results;
 }
 
 /**
