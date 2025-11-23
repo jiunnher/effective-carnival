@@ -90,6 +90,89 @@ async function extractTextOnDevice(imageUri: string): Promise<OCRResult> {
 }
 
 /**
+ * Classify receipt text using Gemini AI (text-only, cheaper than vision)
+ */
+async function classifyWithGemini(
+  text: string,
+  merchantName: string
+): Promise<{ category?: string; confidence: 'high' | 'medium' | 'low' }> {
+  try {
+    if (!GEMINI_API_KEY) {
+      throw new Error('Gemini API key not configured');
+    }
+
+    // Use Gemini 1.5 Flash (text-only) for classification
+    // Cost: $0.000075 per request (10x cheaper than vision!)
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `Classify this Malaysian receipt into a tax deductible category.
+
+Receipt text:
+${text}
+
+Merchant: ${merchantName}
+
+Tax deductible categories:
+- "medical_vax": Vaccination only
+- "medical_dental": Dental treatment/exam only
+- "medical_checkup": Medical checkup, screening, mental health only
+- "medical_serious": Prescription medicine for illness/disease only
+- "medical_fertility": Fertility treatment, IVF only
+- "sports_equip": Sports equipment (shoes, bicycle, gym equipment)
+- "sports_training": Gym membership, personal training
+- "lifestyle_books": Books, journals, magazines
+- "lifestyle_tech": Computer, smartphone, tablet only (max RM2500)
+- "lifestyle_internet": Internet bill, broadband
+- "education_self": University fees, courses, tuition
+
+Important rules:
+- Supplements (vitamin, protein powder) = NOT deductible (return null)
+- Snacks, food, drinks = NOT deductible (return null)
+- Cosmetics, skincare = NOT deductible (return null)
+- Clothing (except sports shoes) = NOT deductible (return null)
+- General shopping = NOT deductible (return null)
+
+Respond with ONLY a JSON object:
+{"category": "category_id" or null, "confidence": "high" or "medium" or "low", "reason": "brief explanation"}
+
+Focus on the ACTUAL ITEMS purchased, not just the store name.`,
+            }],
+          }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 200,
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+    const geminiText = data.candidates[0]?.content?.parts[0]?.text || '';
+    const jsonMatch = geminiText.match(/\{[\s\S]*\}/);
+
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      console.log(`[Gemini Classification] ${parsed.category} (${parsed.confidence}): ${parsed.reason}`);
+      return {
+        category: parsed.category,
+        confidence: parsed.confidence,
+      };
+    }
+
+    return { category: undefined, confidence: 'low' };
+  } catch (error) {
+    console.error('[Gemini Classification] Failed:', error);
+    return { category: undefined, confidence: 'low' };
+  }
+}
+
+/**
  * Extract text and structured data from image using Gemini Vision API
  */
 async function extractTextWithGemini(imageUri: string): Promise<OCRResult> {
@@ -221,7 +304,7 @@ export async function extractTextFromImage(
     }
 
     // Parse to check if we got useful data
-    const parsed = parseReceiptText(deviceResult);
+    const parsed = await parseReceiptText(deviceResult);
     const fieldCount = [parsed.amount, parsed.date, parsed.merchantName].filter(Boolean).length;
 
     if (fieldCount < MIN_REQUIRED_FIELDS) {
@@ -437,7 +520,7 @@ function classifyReceipt(
 /**
  * Parse OCR text into structured receipt data
  */
-export function parseReceiptText(ocrResult: OCRResult): ParsedReceipt {
+export async function parseReceiptText(ocrResult: OCRResult): Promise<ParsedReceipt> {
   const text = ocrResult.text.toLowerCase();
   const lines = ocrResult.lines.map(l => l.text);
 
@@ -550,24 +633,51 @@ export function parseReceiptText(ocrResult: OCRResult): ParsedReceipt {
   }
 
   // Category classification
-  // Prefer Gemini's classification if available and confident
+  // Strategy: Try Gemini AI classification first for better accuracy
+  // Fall back to keywords if Gemini fails or API key not configured
+
+  let geminiClassification: { category?: string; confidence: 'high' | 'medium' | 'low' } | null = null;
+
+  // If Gemini already classified during vision OCR, use that
   if (ocrResult.geminiCategory && ocrResult.geminiCategoryConfidence === 'high') {
     parsed.category = ocrResult.geminiCategory;
     parsed.confidence = 'high';
     parsed.suggestedCategories = [];
   } else {
-    // Use keyword-based classification
-    const classification = classifyReceipt(text, parsed.merchantName || '');
-    parsed.category = classification.category;
-    parsed.suggestedCategories = classification.suggested;
-    parsed.confidence = classification.confidence;
+    // Try Gemini text classification (cheaper than vision, smarter than keywords)
+    // This runs even if on-device OCR was used
+    try {
+      geminiClassification = await classifyWithGemini(text, parsed.merchantName || '');
 
-    // If both available, add Gemini's suggestion if different
-    if (ocrResult.geminiCategory && ocrResult.geminiCategory !== parsed.category) {
-      parsed.suggestedCategories = [
-        ocrResult.geminiCategory,
-        ...parsed.suggestedCategories
-      ];
+      if (geminiClassification.category && geminiClassification.confidence === 'high') {
+        // High confidence AI classification - use it!
+        parsed.category = geminiClassification.category;
+        parsed.confidence = 'high';
+        parsed.suggestedCategories = [];
+      } else {
+        // Medium/low confidence or no category - combine with keyword classification
+        const keywordClassification = classifyReceipt(text, parsed.merchantName || '');
+
+        // Use Gemini's category if available, otherwise keyword
+        parsed.category = geminiClassification.category || keywordClassification.category;
+        parsed.confidence = geminiClassification.confidence || keywordClassification.confidence;
+
+        // Combine suggestions
+        parsed.suggestedCategories = [
+          ...(geminiClassification.category && keywordClassification.category !== geminiClassification.category
+            ? [keywordClassification.category]
+            : []
+          ),
+          ...keywordClassification.suggested,
+        ].filter(Boolean) as string[];
+      }
+    } catch (error) {
+      // Gemini classification failed - fall back to keywords
+      console.log('[Classification] Gemini failed, using keywords');
+      const classification = classifyReceipt(text, parsed.merchantName || '');
+      parsed.category = classification.category;
+      parsed.suggestedCategories = classification.suggested;
+      parsed.confidence = classification.confidence;
     }
   }
 
@@ -609,7 +719,7 @@ export async function scanReceipt(): Promise<ParsedReceipt | null> {
     const ocrResult = await extractTextFromImage(imageUri);
 
     // Parse into structured data
-    const parsedReceipt = parseReceiptText(ocrResult);
+    const parsedReceipt = await parseReceiptText(ocrResult);
 
     // Track which OCR method was used
     parsedReceipt.ocrMethod = ocrResult.method;
@@ -650,7 +760,7 @@ export async function pickReceiptImage(): Promise<ParsedReceipt | null> {
     const ocrResult = await extractTextFromImage(imageUri);
 
     // Parse into structured data
-    const parsedReceipt = parseReceiptText(ocrResult);
+    const parsedReceipt = await parseReceiptText(ocrResult);
 
     // Track which OCR method was used
     parsedReceipt.ocrMethod = ocrResult.method;
