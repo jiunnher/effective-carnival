@@ -251,7 +251,7 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
     sharedPools: [medSharedPool],
     advice: 'Serious diseases. RM1,000 sub-limit for checkup/vaccination.',
     details:
-      'Treatment of serious diseases (AIDS, Parkinson's, Cancer, Renal Failure, Leukemia, Heart Attack, Pulmonary Hypertension, Chronic Liver Disease, Fulminant Viral Hepatitis, Head Trauma with Deficit, Brain Tumor, Major Burns, Major Organ Transplant, Major Amputation of Limbs). Fertility treatment (IUI/IVF). Vaccination expenses (up to RM1,000). Complete medical examination, mental health check-up, and COVID-19 detection tests (up to RM1,000). Child development assessment/training (up to RM4,000 from 2023).',
+      `Treatment of serious diseases (AIDS, Parkinson's, Cancer, Renal Failure, Leukemia, Heart Attack, Pulmonary Hypertension, Chronic Liver Disease, Fulminant Viral Hepatitis, Head Trauma with Deficit, Brain Tumor, Major Burns, Major Organ Transplant, Major Amputation of Limbs). Fertility treatment (IUI/IVF). Vaccination expenses (up to RM1,000). Complete medical examination, mental health check-up, and COVID-19 detection tests (up to RM1,000). Child development assessment/training (up to RM4,000 from 2023).`,
   });
 
   // Medical (Parents)
