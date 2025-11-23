@@ -1,0 +1,57 @@
+{
+  "expo": {
+    "name": "CukaiPal",
+    "slug": "cukaipal-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#10b981"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.cukaipal.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow CukaiPal to access your camera to scan receipts",
+        "NSPhotoLibraryUsageDescription": "Allow CukaiPal to access your photo library to upload receipt images",
+        "NSPhotoLibraryAddUsageDescription": "Allow CukaiPal to save processed receipts to your photo library"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#10b981"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "package": "com.cukaipal.mobile",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow CukaiPal to access your photos to upload receipt images",
+          "cameraPermission": "Allow CukaiPal to access your camera to scan receipts"
+        }
+      ],
+      [
+        "expo-document-picker",
+        {
+          "iCloudContainerEnvironment": "Production"
+        }
+      ]
+    ]
+  }
+}
