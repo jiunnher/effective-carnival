@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Receipt, UserProfile, YearIncome } from '../engine/types';
 import { CURRENT_YEAR } from '../engine/taxEngine';
-import { storageAdapter } from '../storage/NativeStorageAdapter';
+import { supabaseStorageAdapter as storageAdapter } from '../storage/SupabaseStorageAdapter';
 
 interface AppContextType {
   // Data state

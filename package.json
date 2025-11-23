@@ -1,0 +1,12 @@
+{
+  "dependencies": {
+    "@invertase/react-native-apple-authentication": "^2.5.0",
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "@react-native-google-signin/google-signin": "^16.0.0",
+    "@supabase/supabase-js": "^2.84.0",
+    "axios": "^1.13.2",
+    "jwt-decode": "^4.0.0",
+    "react-native-purchases": "^9.6.7",
+    "react-native-url-polyfill": "^3.0.0"
+  }
+}

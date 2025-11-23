@@ -66,7 +66,6 @@ export const REVENUECAT_API_KEY = {
 export const SUBSCRIPTION_PRODUCTS = {
   MONTHLY: 'cukaipal_monthly',
   YEARLY: 'cukaipal_yearly',
-  LIFETIME: 'cukaipal_lifetime',
 };
 
 // Feature flags

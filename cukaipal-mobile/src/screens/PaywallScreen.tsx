@@ -55,21 +55,6 @@ const PLANS: PricingPlan[] = [
       'Family sharing (up to 5)',
     ],
   },
-  {
-    id: SUBSCRIPTION_PRODUCTS.LIFETIME,
-    name: 'Lifetime',
-    price: 'RM 299',
-    period: 'one-time',
-    savings: 'Best Value',
-    features: [
-      'Everything in Yearly',
-      'Lifetime updates',
-      'Priority feature requests',
-      'VIP support',
-      'Exclusive beta access',
-      'Transferable license',
-    ],
-  },
 ];
 
 interface PaywallScreenProps {
