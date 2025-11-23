@@ -3,53 +3,28 @@ import {
   CategoryStats,
   DeductibleItem,
   Receipt,
-  TaxBracket,
   UserProfile,
 } from './types';
+import {
+  getSupportedYears,
+  getFilingDeadline,
+  getTaxBrackets,
+  getCategoryLimits,
+  getYearFeatures,
+} from './yearConfigs';
 
 // --- CONSTANTS ---
 
 export const CURRENT_YEAR = 2025;
 
-export const YA_YEARS = [2025, 2024, 2023, 2022, 2021, 2020, 2019];
+// Get supported years from centralized config
+export const YA_YEARS = getSupportedYears();
 
-export const FILING_DEADLINES: { [year: number]: string } = {
-  2025: '2026-05-15',
-  2024: '2025-05-15',
-  2023: '2024-05-15',
-  2022: '2023-05-15',
-  2021: '2022-05-15',
-  2020: '2021-05-15',
-  2019: '2020-05-15',
-};
-
-export const TAX_BRACKETS: { [key: string]: TaxBracket[] } = {
-  post_2023: [
-    { max: 5000, rate: 0 },
-    { max: 20000, rate: 0.01 },
-    { max: 35000, rate: 0.03 },
-    { max: 50000, rate: 0.06 },
-    { max: 70000, rate: 0.11 },
-    { max: 100000, rate: 0.19 },
-    { max: 400000, rate: 0.25 },
-    { max: 600000, rate: 0.26 },
-    { max: 2000000, rate: 0.28 },
-    { max: Infinity, rate: 0.3 },
-  ],
-  pre_2023: [
-    { max: 5000, rate: 0 },
-    { max: 20000, rate: 0.01 },
-    { max: 35000, rate: 0.03 },
-    { max: 50000, rate: 0.08 },
-    { max: 70000, rate: 0.13 },
-    { max: 100000, rate: 0.21 },
-    { max: 250000, rate: 0.24 },
-    { max: 400000, rate: 0.245 },
-    { max: 600000, rate: 0.25 },
-    { max: 1000000, rate: 0.26 },
-    { max: Infinity, rate: 0.28 },
-  ],
-};
+// Build filing deadlines map from centralized config
+export const FILING_DEADLINES: { [year: number]: string } = {};
+YA_YEARS.forEach((year) => {
+  FILING_DEADLINES[year] = getFilingDeadline(year);
+});
 
 export const DEDUCTIBLES: { [key: string]: DeductibleItem } = {
   lifestyle_books: { id: 'lifestyle_books', label: 'Books / Journals', parent: 'lifestyle' },
@@ -109,18 +84,22 @@ export const validateDate = (dateStr: string, year: number): boolean => {
 export const getYearConfig = (year: number, profile: UserProfile): CategoryConfig[] => {
   const configs: CategoryConfig[] = [];
 
+  // Get year-specific limits and features from centralized config
+  const limits = getCategoryLimits(year);
+  const features = getYearFeatures(year);
+
   // Spouse / Alimony
   if (profile.status === 'married' && (!profile.spouseWorking || profile.alimony)) {
     configs.push({
       id: 'spouse',
       title: 'Spouse / Alimony',
-      limit: 4000,
+      limit: limits.spouse,
       color: 'bg-indigo-600',
       icon: '❤️',
       items: [DEDUCTIBLES.relief_spouse, DEDUCTIBLES.relief_alimony],
       advice: 'Automatic relief for non-working spouse.',
       details:
-        'Deduction for spouse living together in the basis year who has no source of income/total income. Also applicable for alimony payments to a former wife (subject to formal agreement/court order). Total deduction for both spouse and alimony is restricted to RM4,000.',
+        `Deduction for spouse living together in the basis year who has no source of income/total income. Also applicable for alimony payments to a former wife (subject to formal agreement/court order). Total deduction for both spouse and alimony is restricted to RM${limits.spouse.toLocaleString()}.`,
       isAutomatic: true,
     });
   }
@@ -130,13 +109,13 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
     configs.push({
       id: 'disabled_self',
       title: 'Disabled Individual',
-      limit: 6000,
+      limit: limits.disabledSelf,
       color: 'bg-purple-600',
       icon: '♿',
       items: [DEDUCTIBLES.relief_disabled_self],
       advice: 'Automatic relief for OKU card holder.',
       details:
-        'Further deduction of RM6,000 for an individual who is certified in writing by the Department of Social Welfare (JKM) as a disabled person.',
+        `Further deduction of RM${limits.disabledSelf.toLocaleString()} for an individual who is certified in writing by the Department of Social Welfare (JKM) as a disabled person.`,
       isAutomatic: true,
     });
   }
@@ -146,24 +125,24 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
     configs.push({
       id: 'disabled_spouse',
       title: 'Disabled Spouse',
-      limit: 5000,
+      limit: limits.disabledSpouse,
       color: 'bg-purple-500',
       icon: '♿',
       items: [DEDUCTIBLES.relief_disabled_spouse],
       advice: 'Automatic additional relief.',
       details:
-        'Additional deduction of RM5,000 is allowed if the spouse is a disabled person (OKU).',
+        `Additional deduction of RM${limits.disabledSpouse.toLocaleString()} is allowed if the spouse is a disabled person (OKU).`,
       isAutomatic: true,
     });
   }
 
   // Child Relief
   let childLimit = 0;
-  if (profile.kidsUnder18 > 0) childLimit += profile.kidsUnder18 * 2000;
-  if (profile.kidsPreU > 0) childLimit += profile.kidsPreU * 2000;
-  if (profile.kidsDegree > 0) childLimit += profile.kidsDegree * 8000;
-  if (profile.kidsDisabled > 0) childLimit += profile.kidsDisabled * 6000;
-  if (profile.kidsDisabledDiploma > 0) childLimit += profile.kidsDisabledDiploma * 14000;
+  if (profile.kidsUnder18 > 0) childLimit += profile.kidsUnder18 * limits.childU18;
+  if (profile.kidsPreU > 0) childLimit += profile.kidsPreU * limits.childPreU;
+  if (profile.kidsDegree > 0) childLimit += profile.kidsDegree * limits.childDegree;
+  if (profile.kidsDisabled > 0) childLimit += profile.kidsDisabled * limits.childDisabled;
+  if (profile.kidsDisabledDiploma > 0) childLimit += profile.kidsDisabledDiploma * limits.childDisabledDiploma;
 
   if (childLimit > 0) {
     configs.push({
@@ -175,7 +154,7 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
       items: [DEDUCTIBLES.relief_child_u18],
       advice: 'Calculated automatically based on children profile.',
       details:
-        'RM2,000 per unmarried child under 18 years old. RM2,000 for unmarried child 18+ in full-time education (A-Level, Matriculation, Preparatory). RM8,000 for unmarried child 18+ pursuing a degree (or higher) at a recognized higher learning institution. RM6,000 for a disabled child (additional RM8,000 if 18+ and in higher education).',
+        `RM${limits.childU18.toLocaleString()} per unmarried child under 18 years old. RM${limits.childPreU.toLocaleString()} for unmarried child 18+ in full-time education (A-Level, Matriculation, Preparatory). RM${limits.childDegree.toLocaleString()} for unmarried child 18+ pursuing a degree (or higher) at a recognized higher learning institution. RM${limits.childDisabled.toLocaleString()} for a disabled child (additional RM${limits.childDegree.toLocaleString()} if 18+ and in higher education).`,
       isAutomatic: true,
     });
   }
@@ -186,26 +165,26 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
     DEDUCTIBLES.lifestyle_tech,
     DEDUCTIBLES.lifestyle_internet,
   ];
-  if (year < 2024) lsItems.push(DEDUCTIBLES.lifestyle_gym_legacy);
+  if (!features.hasSportsSeparate) lsItems.push(DEDUCTIBLES.lifestyle_gym_legacy);
   configs.push({
     id: 'lifestyle',
     title: 'Lifestyle',
-    limit: 2500,
+    limit: limits.lifestyle,
     color: 'bg-blue-500',
     icon: '📱',
     items: lsItems,
     advice: 'Books, Personal Computer, Smartphone, Tablet, Internet.',
     details:
       'Includes purchase of books, journals, magazines, printed newspapers and other similar publications (excluding banned publications). Purchase of personal computer, smartphone or tablet (for non-business use). Payment of monthly bill for internet subscription (under own name).' +
-      (year < 2024 ? ' Includes gym memberships.' : ''),
+      (!features.hasSportsSeparate ? ' Includes gym memberships.' : ''),
   });
 
   // Sports
-  if (year >= 2024) {
+  if (features.hasSportsSeparate && limits.sports > 0) {
     configs.push({
       id: 'sports',
       title: 'Sports Equipment & Gym',
-      limit: 1000,
+      limit: limits.sports,
       color: 'bg-orange-500',
       icon: '⚽',
       items: [DEDUCTIBLES.sports_equip, DEDUCTIBLES.sports_facility, DEDUCTIBLES.sports_training],
@@ -213,11 +192,12 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
       details:
         'Purchase of sports equipment for sports activity defined under the Sports Development Act 1997. Rental or entrance fees to any sports facility. Registration fees for any sports competition where the organizer is approved and licensed by the Commissioner of Sports. Fees for sports training conducted by a registered coach/club.',
     });
-  } else if (year >= 2021) {
+  } else if (!features.hasSportsSeparate && limits.sports > 0) {
+    // Legacy additional sports relief (2021)
     configs.push({
       id: 'sports_extra',
       title: 'Additional Sports Relief',
-      limit: 500,
+      limit: limits.sports,
       color: 'bg-orange-500',
       icon: '⚽',
       items: [DEDUCTIBLES.sports_extra_legacy],
@@ -228,37 +208,37 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
   }
 
   // Medical (Self, Spouse & Child)
-  const medLimit = year >= 2023 ? 10000 : 8000;
   const medItems = [
     DEDUCTIBLES.medical_serious,
     DEDUCTIBLES.medical_fertility,
     DEDUCTIBLES.medical_vax,
     DEDUCTIBLES.medical_checkup,
   ];
-  if (year >= 2024) medItems.push(DEDUCTIBLES.medical_dental);
-  if (year >= 2023) medItems.push(DEDUCTIBLES.medical_child_dev);
+  if (features.hasDental) medItems.push(DEDUCTIBLES.medical_dental);
+  if (features.hasChildDev) medItems.push(DEDUCTIBLES.medical_child_dev);
   const medSharedPool = {
-    limit: 1000,
+    limit: features.medicalSharedPoolLimit,
     items: ['medical_checkup', 'medical_vax', 'medical_dental'],
   };
   configs.push({
     id: 'medical',
     title: 'Medical (Self, Spouse & Child)',
-    limit: medLimit,
+    limit: limits.medical,
     color: 'bg-pink-500',
     icon: '🏥',
     items: medItems,
     sharedPools: [medSharedPool],
-    advice: 'Serious diseases. RM1,000 sub-limit for checkup/vaccination.',
+    advice: `Serious diseases. RM${features.medicalSharedPoolLimit.toLocaleString()} sub-limit for checkup/vaccination.`,
     details:
-      'Treatment of serious diseases (AIDS, Parkinson's, Cancer, Renal Failure, Leukemia, Heart Attack, Pulmonary Hypertension, Chronic Liver Disease, Fulminant Viral Hepatitis, Head Trauma with Deficit, Brain Tumor, Major Burns, Major Organ Transplant, Major Amputation of Limbs). Fertility treatment (IUI/IVF). Vaccination expenses (up to RM1,000). Complete medical examination, mental health check-up, and COVID-19 detection tests (up to RM1,000). Child development assessment/training (up to RM4,000 from 2023).',
+      `Treatment of serious diseases (AIDS, Parkinson's, Cancer, Renal Failure, Leukemia, Heart Attack, Pulmonary Hypertension, Chronic Liver Disease, Fulminant Viral Hepatitis, Head Trauma with Deficit, Brain Tumor, Major Burns, Major Organ Transplant, Major Amputation of Limbs). Fertility treatment (IUI/IVF). Vaccination expenses (up to RM${features.medicalSharedPoolLimit.toLocaleString()}). Complete medical examination, mental health check-up, and COVID-19 detection tests (up to RM${features.medicalSharedPoolLimit.toLocaleString()}).` +
+      (features.hasChildDev ? ' Child development assessment/training (up to RM4,000).' : ''),
   });
 
   // Medical (Parents)
   configs.push({
     id: 'medical_parents',
     title: 'Medical (Parents)',
-    limit: 8000,
+    limit: limits.medicalParents,
     color: 'bg-red-500',
     icon: '👵',
     items: [DEDUCTIBLES.parents_treatment],
@@ -271,7 +251,7 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
   configs.push({
     id: 'education_self',
     title: 'Education Fees (Self)',
-    limit: 7000,
+    limit: limits.educationSelf,
     color: 'bg-indigo-500',
     icon: '🎓',
     items: [DEDUCTIBLES.education_self],
@@ -284,33 +264,33 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
   configs.push({
     id: 'insurance_ed_med',
     title: 'Education/Medical Ins.',
-    limit: 3000,
+    limit: limits.insuranceEdMed,
     color: 'bg-teal-500',
     icon: '🛡️',
     items: [DEDUCTIBLES.insurance_ed_med],
     advice: 'Education or Medical insurance premiums.',
     details:
-      'Insurance premiums paid for education or medical benefits for self, spouse or child. The total deduction is restricted to RM3,000.',
+      `Insurance premiums paid for education or medical benefits for self, spouse or child. The total deduction is restricted to RM${limits.insuranceEdMed.toLocaleString()}.`,
   });
 
   // PRS / Annuity
   configs.push({
     id: 'prs',
     title: 'PRS / Annuity',
-    limit: 3000,
+    limit: limits.prs,
     color: 'bg-yellow-600',
     icon: '📈',
     items: [DEDUCTIBLES.prs_annuity],
     advice: 'Private Retirement Scheme or Deferred Annuity.',
     details:
-      'Contribution to a Private Retirement Scheme (PRS) approved by the Securities Commission or payment of deferred annuity premium. Restricted to RM3,000.',
+      `Contribution to a Private Retirement Scheme (PRS) approved by the Securities Commission or payment of deferred annuity premium. Restricted to RM${limits.prs.toLocaleString()}.`,
   });
 
   // SSPN Savings
   configs.push({
     id: 'sspn',
     title: 'SSPN Savings',
-    limit: 8000,
+    limit: limits.sspn,
     color: 'bg-yellow-500',
     icon: '🎓',
     items: [DEDUCTIBLES.child_sspn],
@@ -324,7 +304,7 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
     configs.push({
       id: 'childcare',
       title: 'Childcare Fees',
-      limit: 3000,
+      limit: limits.childcare,
       color: 'bg-teal-500',
       icon: '🧸',
       items: [DEDUCTIBLES.child_care],
@@ -338,7 +318,7 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
   configs.push({
     id: 'breastfeeding',
     title: 'Breastfeeding Equipment',
-    limit: 1000,
+    limit: limits.breastfeeding,
     color: 'bg-rose-400',
     icon: '🍼',
     items: [DEDUCTIBLES.child_breastfeeding],
@@ -356,22 +336,22 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
     configs.push({
       id: 'disabled_equip',
       title: 'Disabled Support Equip.',
-      limit: 6000,
+      limit: limits.disabledEquip,
       color: 'bg-purple-700',
       icon: '♿',
       items: [DEDUCTIBLES.relief_disabled_equip],
       advice: 'Basic supporting equipment.',
       details:
-        'Purchase of basic supporting equipment for self, spouse, child or parent who is a disabled person. Restricted to RM6,000.',
+        `Purchase of basic supporting equipment for self, spouse, child or parent who is a disabled person. Restricted to RM${limits.disabledEquip.toLocaleString()}.`,
     });
   }
 
   // EV Charging Facility
-  if (year >= 2022) {
+  if (features.hasEvCharging && limits.ev > 0) {
     configs.push({
       id: 'ev',
       title: 'EV Charging Facility',
-      limit: 2500,
+      limit: limits.ev,
       color: 'bg-emerald-500',
       icon: '⚡',
       items: [DEDUCTIBLES.ev_install],
@@ -385,26 +365,26 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
   configs.push({
     id: 'socso',
     title: 'SOCSO / EIS',
-    limit: 350,
+    limit: limits.socso,
     color: 'bg-blue-600',
     icon: '💼',
     items: [DEDUCTIBLES.socso],
     advice: 'Employee contributions only.',
     details:
-      'Contribution to the Social Security Organization (SOCSO) and Employment Insurance System (EIS). Restricted to RM350.',
+      `Contribution to the Social Security Organization (SOCSO) and Employment Insurance System (EIS). Restricted to RM${limits.socso.toLocaleString()}.`,
   });
 
   // Life Insurance / EPF
   configs.push({
     id: 'life_insurance',
     title: 'Life Insurance / EPF',
-    limit: 7000,
+    limit: limits.lifeInsurance,
     color: 'bg-teal-600',
     icon: '🛡️',
     items: [DEDUCTIBLES.life_insurance],
     advice: 'EPF (Self) + Life Insurance.',
     details:
-      'Restricted to RM4,000 for EPF contributions (or approved schemes) and RM3,000 for Life Insurance premiums. For public servants under pension scheme, the limit is RM7,000 for Life Insurance.',
+      `Restricted to RM4,000 for EPF contributions (or approved schemes) and RM3,000 for Life Insurance premiums. For public servants under pension scheme, the limit is RM${limits.lifeInsurance.toLocaleString()} for Life Insurance.`,
   });
 
   return configs;
@@ -412,7 +392,10 @@ export const getYearConfig = (year: number, profile: UserProfile): CategoryConfi
 
 export const calculateProgressiveTax = (chargeableIncome: number, year: number): number => {
   if (chargeableIncome <= 5000) return 0;
-  const brackets = year >= 2023 ? TAX_BRACKETS['post_2023'] : TAX_BRACKETS['pre_2023'];
+
+  // Get tax brackets for the specific year from centralized config
+  const brackets = getTaxBrackets(year);
+
   let tax = 0;
   let previousMax = 0;
   for (let i = 0; i < brackets.length; i++) {
