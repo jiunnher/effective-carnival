@@ -69,8 +69,25 @@ export const PaywallScreen: React.FC<PaywallScreenProps> = ({ onClose }) => {
   const handleSubscribe = async () => {
     setIsLoading(true);
     try {
-      // Purchase using RevenueCat
-      const purchaseResult = await Purchases.purchasePackage(selectedPlan);
+      // Get available offerings from RevenueCat
+      const offerings = await Purchases.getOfferings();
+
+      if (!offerings.current) {
+        throw new Error('No subscription offerings available');
+      }
+
+      // Find the package that matches the selected plan
+      const availablePackages = offerings.current.availablePackages;
+      const packageToPurchase = availablePackages.find(
+        pkg => pkg.product.identifier === selectedPlan
+      );
+
+      if (!packageToPurchase) {
+        throw new Error('Selected subscription plan not available');
+      }
+
+      // Purchase the package
+      const purchaseResult = await Purchases.purchasePackage(packageToPurchase);
 
       if (purchaseResult.customerInfo.entitlements.active['pro']) {
         await refreshUser();

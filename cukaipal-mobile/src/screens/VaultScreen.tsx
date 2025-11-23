@@ -14,7 +14,7 @@ import { Archive, FileDown, FileSpreadsheet, Search } from 'lucide-react-native'
 import { useAppContext } from '../context/AppContext';
 import { ReceiptItem } from '../components/ReceiptItem';
 import { DEDUCTIBLES, formatCurrency, YA_YEARS } from '../engine/taxEngine';
-import * as FileSystem from 'expo-file-system';
+import { Paths, File } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as Print from 'expo-print';
 
@@ -50,9 +50,10 @@ export const VaultScreen: React.FC = () => {
           .map((r) => `${r.date},${r.category},${r.subCategory},${r.description},${r.amount}`)
           .join('\n');
 
-      const fileUri = `${FileSystem.cacheDirectory}cukaipal_export_${selectedYear}.csv`;
-      await FileSystem.writeAsStringAsync(fileUri, csvContent);
-      await Sharing.shareAsync(fileUri);
+      const fileName = `cukaipal_export_${selectedYear}.csv`;
+      const file = new File(Paths.document, fileName);
+      await file.write(csvContent);
+      await Sharing.shareAsync(file.uri);
     } catch (error) {
       Alert.alert('Export Failed', 'Could not export CSV file.');
     }

@@ -14,7 +14,7 @@ import { Banknote, Users, Accessibility, Settings as SettingsIcon } from 'lucide
 import { useAppContext } from '../context/AppContext';
 import { Stepper } from '../components/Stepper';
 import { Modal } from '../components/Modal';
-import * as FileSystem from 'expo-file-system';
+import { Paths, File } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 
@@ -40,11 +40,10 @@ export const ProfileScreen: React.FC = () => {
     };
 
     try {
-      const fileUri = `${FileSystem.cacheDirectory}cukaipal_backup_${
-        new Date().toISOString().split('T')[0]
-      }.json`;
-      await FileSystem.writeAsStringAsync(fileUri, JSON.stringify(data, null, 2));
-      await Sharing.shareAsync(fileUri);
+      const fileName = `cukaipal_backup_${new Date().toISOString().split('T')[0]}.json`;
+      const file = new File(Paths.document, fileName);
+      await file.write(JSON.stringify(data, null, 2));
+      await Sharing.shareAsync(file.uri);
     } catch (error) {
       console.error('Backup export failed:', error);
     }
@@ -58,7 +57,8 @@ export const ProfileScreen: React.FC = () => {
 
       if (result.canceled) return;
 
-      const fileContent = await FileSystem.readAsStringAsync(result.assets[0].uri);
+      const file = new File(result.assets[0].uri);
+      const fileContent = await file.text();
       const data = JSON.parse(fileContent);
 
       if (data.version !== '1.0') {
