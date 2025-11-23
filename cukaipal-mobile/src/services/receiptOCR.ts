@@ -1,13 +1,25 @@
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 /**
- * Receipt OCR Service using Expo Image Manipulator + Text Recognition
+ * Receipt OCR Service with Hybrid Approach
  *
- * Note: For production, you may want to use:
- * - expo-image-manipulator for preprocessing
- * - react-native-text-recognition (wraps Apple Vision & Google ML Kit)
+ * Strategy:
+ * 1. Try Apple Vision Framework first (free, on-device, private)
+ * 2. If confidence is low or extraction fails, fall back to Gemini OCR (cloud, more accurate)
+ *
+ * Libraries needed:
+ * - react-native-text-recognition (Apple Vision on iOS, Google ML Kit on Android)
+ * - @google/generative-ai (Gemini API for fallback)
  */
+
+// Gemini API configuration
+const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || '';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+
+// Fallback thresholds
+const MIN_TEXT_LENGTH = 10; // Minimum characters to consider OCR successful
+const MIN_REQUIRED_FIELDS = 1; // Minimum fields (amount, date, merchant) to extract
 
 export interface OCRResult {
   text: string;
@@ -29,39 +41,183 @@ export interface ParsedReceipt {
   merchantName?: string;
   description?: string;
   category?: string;
+  ocrMethod?: 'device' | 'cloud'; // Track which method was used
 }
 
 /**
- * Extract text from image using device OCR
- *
- * Implementation note: This is a placeholder that would use:
- * 1. react-native-text-recognition (Apple Vision on iOS, ML Kit on Android)
- * 2. Or expo-image-manipulator + manual processing
- *
- * For now, returns mock data. Replace with actual OCR library.
+ * Extract text from image using on-device OCR (Apple Vision / Google ML Kit)
  */
-export async function extractTextFromImage(imageUri: string): Promise<OCRResult> {
-  // TODO: Implement actual OCR using react-native-text-recognition
-  // For now, this is a placeholder
+async function extractTextOnDevice(imageUri: string): Promise<OCRResult> {
+  try {
+    // TODO: Install react-native-text-recognition
+    // npm install react-native-text-recognition
+    // cd ios && pod install && cd ..
 
-  // In production, you would:
-  // import TextRecognition from 'react-native-text-recognition';
-  // const result = await TextRecognition.recognize(imageUri);
+    // import TextRecognition from 'react-native-text-recognition';
+    // const result = await TextRecognition.recognize(imageUri);
 
-  console.log('OCR would process image:', imageUri);
+    console.log('[OCR] Attempting on-device OCR with Apple Vision:', imageUri);
 
-  // Mock response for development
-  return {
-    text: 'RECEIPT\nDate: 15/01/2024\nAmount: RM 150.00\nMerchant: ABC Pharmacy\nItem: Prescription Medicine',
-    confidence: 0.95,
-    lines: [
-      { text: 'RECEIPT' },
-      { text: 'Date: 15/01/2024' },
-      { text: 'Amount: RM 150.00' },
-      { text: 'Merchant: ABC Pharmacy' },
-      { text: 'Item: Prescription Medicine' },
-    ],
-  };
+    // Mock response for development (replace with actual library call)
+    const result = {
+      text: 'RECEIPT\nDate: 15/01/2024\nAmount: RM 150.00\nMerchant: ABC Pharmacy\nItem: Prescription Medicine',
+      confidence: 0.95,
+      blocks: [
+        { text: 'RECEIPT', frame: { x: 0, y: 0, width: 100, height: 20 } },
+        { text: 'Date: 15/01/2024', frame: { x: 0, y: 25, width: 150, height: 20 } },
+        { text: 'Amount: RM 150.00', frame: { x: 0, y: 50, width: 180, height: 20 } },
+        { text: 'Merchant: ABC Pharmacy', frame: { x: 0, y: 75, width: 200, height: 20 } },
+        { text: 'Item: Prescription Medicine', frame: { x: 0, y: 100, width: 220, height: 20 } },
+      ],
+    };
+
+    return {
+      text: result.text,
+      confidence: 0.95, // Vision framework doesn't provide confidence, assume high
+      lines: result.blocks.map((block: any) => ({
+        text: block.text,
+        boundingBox: block.frame,
+      })),
+    };
+  } catch (error) {
+    console.error('[OCR] On-device OCR failed:', error);
+    throw error;
+  }
+}
+
+/**
+ * Extract text and structured data from image using Gemini Vision API
+ */
+async function extractTextWithGemini(imageUri: string): Promise<OCRResult> {
+  try {
+    if (!GEMINI_API_KEY) {
+      throw new Error('Gemini API key not configured. Set EXPO_PUBLIC_GEMINI_API_KEY in .env');
+    }
+
+    console.log('[OCR] Falling back to Gemini OCR for complex receipt');
+
+    // Read image file and convert to base64
+    const base64Image = await FileSystem.readAsStringAsync(imageUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    // Call Gemini API with vision model
+    const response = await fetch(`${GEMINI_API_URL}?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text: `Extract all text from this receipt image. Format the response as JSON with this structure:
+{
+  "text": "full text extracted from receipt",
+  "lines": ["line 1", "line 2", ...],
+  "amount": extracted amount as number or null,
+  "date": extracted date in YYYY-MM-DD format or null,
+  "merchant": merchant/store name or null,
+  "items": ["item 1", "item 2", ...] or []
+}
+
+Focus on accuracy. If you cannot confidently extract a field, set it to null.`,
+              },
+              {
+                inline_data: {
+                  mime_type: 'image/jpeg',
+                  data: base64Image,
+                },
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.1, // Low temperature for factual extraction
+          topK: 1,
+          topP: 1,
+          maxOutputTokens: 2048,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Gemini API error: ${response.status} - ${error}`);
+    }
+
+    const data = await response.json();
+    const geminiText = data.candidates[0]?.content?.parts[0]?.text || '';
+
+    // Parse JSON response from Gemini
+    const jsonMatch = geminiText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('Gemini did not return valid JSON');
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    return {
+      text: parsed.text || '',
+      confidence: 0.98, // Gemini is typically very accurate
+      lines: (parsed.lines || []).map((line: string) => ({ text: line })),
+    };
+  } catch (error) {
+    console.error('[OCR] Gemini OCR failed:', error);
+    throw error;
+  }
+}
+
+/**
+ * Hybrid OCR: Try on-device first, fall back to Gemini if needed
+ */
+export async function extractTextFromImage(
+  imageUri: string,
+  forceCloud: boolean = false
+): Promise<OCRResult & { method: 'device' | 'cloud' }> {
+  // If user explicitly requests cloud OCR, skip device attempt
+  if (forceCloud) {
+    console.log('[OCR] Force cloud mode, using Gemini directly');
+    const result = await extractTextWithGemini(imageUri);
+    return { ...result, method: 'cloud' };
+  }
+
+  try {
+    // Try on-device OCR first (free, private, fast)
+    const deviceResult = await extractTextOnDevice(imageUri);
+
+    // Check if result is acceptable
+    if (deviceResult.text.length < MIN_TEXT_LENGTH) {
+      console.log('[OCR] On-device result too short, trying Gemini fallback');
+      throw new Error('Text too short, likely poor OCR quality');
+    }
+
+    // Parse to check if we got useful data
+    const parsed = parseReceiptText(deviceResult);
+    const fieldCount = [parsed.amount, parsed.date, parsed.merchantName].filter(Boolean).length;
+
+    if (fieldCount < MIN_REQUIRED_FIELDS) {
+      console.log(`[OCR] Only extracted ${fieldCount} fields, trying Gemini fallback`);
+      throw new Error('Insufficient data extracted from on-device OCR');
+    }
+
+    console.log('[OCR] ✅ On-device OCR successful');
+    return { ...deviceResult, method: 'device' };
+
+  } catch (deviceError) {
+    // On-device OCR failed or insufficient, try Gemini
+    console.log('[OCR] On-device OCR failed, attempting Gemini fallback');
+
+    try {
+      const cloudResult = await extractTextWithGemini(imageUri);
+      console.log('[OCR] ✅ Gemini fallback successful');
+      return { ...cloudResult, method: 'cloud' };
+    } catch (cloudError) {
+      console.error('[OCR] ❌ Both on-device and cloud OCR failed');
+      throw new Error('All OCR methods failed. Please try with a clearer image.');
+    }
+  }
 }
 
 /**
@@ -192,11 +348,16 @@ export async function scanReceipt(): Promise<ParsedReceipt | null> {
 
     const imageUri = result.assets[0].uri;
 
-    // Extract text using OCR
+    // Extract text using hybrid OCR (device first, cloud fallback)
     const ocrResult = await extractTextFromImage(imageUri);
 
     // Parse into structured data
     const parsedReceipt = parseReceiptText(ocrResult);
+
+    // Track which OCR method was used
+    parsedReceipt.ocrMethod = ocrResult.method;
+
+    console.log(`[OCR] Receipt scanned using ${ocrResult.method} OCR`);
 
     return parsedReceipt;
   } catch (error) {
@@ -227,8 +388,17 @@ export async function pickReceiptImage(): Promise<ParsedReceipt | null> {
     }
 
     const imageUri = result.assets[0].uri;
+
+    // Extract text using hybrid OCR (device first, cloud fallback)
     const ocrResult = await extractTextFromImage(imageUri);
+
+    // Parse into structured data
     const parsedReceipt = parseReceiptText(ocrResult);
+
+    // Track which OCR method was used
+    parsedReceipt.ocrMethod = ocrResult.method;
+
+    console.log(`[OCR] Image processed using ${ocrResult.method} OCR`);
 
     return parsedReceipt;
   } catch (error) {
