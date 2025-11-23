@@ -229,11 +229,26 @@ export function parseReceiptText(ocrResult: OCRResult): ParsedReceipt {
 
   const parsed: ParsedReceipt = {};
 
-  // Extract amount
+  // Extract amount - prioritize "Total" keywords
+  // Try to find the FINAL total, not subtotals or item prices
   const amountPatterns = [
-    /rm\s*(\d+(?:[,\.]\d{2})?)/i,
-    /total[:\s]+(\d+(?:[,\.]\d{2})?)/i,
-    /amount[:\s]+(\d+(?:[,\.]\d{2})?)/i,
+    // Malaysian receipts - "Jumlah" means "Total" in Malay
+    /(?:grand\s+)?jumlah[:\s]+rm?\s*(\d+(?:[,\.]\d{2})?)/i,
+    /(?:grand\s+)?total[:\s]+rm?\s*(\d+(?:[,\.]\d{2})?)/i,
+
+    // English variations
+    /net\s+total[:\s]+rm?\s*(\d+(?:[,\.]\d{2})?)/i,
+    /final\s+amount[:\s]+rm?\s*(\d+(?:[,\.]\d{2})?)/i,
+    /amount\s+payable[:\s]+rm?\s*(\d+(?:[,\.]\d{2})?)/i,
+
+    // Balance/Payment (Malaysian receipts)
+    /bayaran[:\s]+rm?\s*(\d+(?:[,\.]\d{2})?)/i,  // "Payment" in Malay
+    /baki[:\s]+rm?\s*(\d+(?:[,\.]\d{2})?)/i,     // "Balance" in Malay
+
+    // Generic patterns (last resort)
+    /total[:\s]+rm?\s*(\d+(?:[,\.]\d{2})?)/i,
+    /amount[:\s]+rm?\s*(\d+(?:[,\.]\d{2})?)/i,
+    /rm\s*(\d+(?:[,\.]\d{2})?)/i,  // Just "RM 123.45"
   ];
 
   for (const pattern of amountPatterns) {
@@ -245,11 +260,34 @@ export function parseReceiptText(ocrResult: OCRResult): ParsedReceipt {
     }
   }
 
-  // Extract date
+  // Fallback: If no amount found, find all numbers and take the largest
+  // (likely the total on a receipt)
+  if (!parsed.amount) {
+    const allNumbers = text.match(/\d+(?:[,\.]\d{2})?/g);
+    if (allNumbers && allNumbers.length > 0) {
+      const numbers = allNumbers.map(n => parseFloat(n.replace(',', '.')));
+      const maxNumber = Math.max(...numbers);
+      // Only use if it's a reasonable receipt amount (> 1 RM, < 10000 RM)
+      if (maxNumber > 1 && maxNumber < 10000) {
+        parsed.amount = maxNumber;
+      }
+    }
+  }
+
+  // Extract date - handle Malaysian formats
   const datePatterns = [
-    /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/,
-    /(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/,
-    /date[:\s]+(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/i,
+    // With "Date" keyword (most reliable)
+    /date[:\s]+(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/i,
+    /tarikh[:\s]+(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/i,  // "Date" in Malay
+
+    // ISO format (YYYY-MM-DD or YYYY/MM/DD)
+    /(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/,
+
+    // DD/MM/YYYY or DD-MM-YYYY (common in Malaysia)
+    /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/,
+
+    // Short year (DD/MM/YY)
+    /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})/,
   ];
 
   for (const pattern of datePatterns) {
@@ -297,14 +335,33 @@ export function parseReceiptText(ocrResult: OCRResult): ParsedReceipt {
     }
   }
 
-  // Basic category detection based on keywords
+  // Category detection - Malaysian stores and keywords
   const categoryKeywords = {
-    medical: ['pharmacy', 'clinic', 'hospital', 'doctor', 'medicine', 'health'],
-    lifestyle_books: ['bookstore', 'book', 'mph', 'kinokuniya', 'popular'],
-    lifestyle_tech: ['apple', 'samsung', 'laptop', 'phone', 'computer', 'electronic'],
-    lifestyle_internet: ['unifi', 'maxis', 'digi', 'celcom', 'broadband', 'internet'],
-    sports_equip: ['decathlon', 'sport', 'gym', 'fitness'],
-    education_self: ['university', 'college', 'tuition', 'course', 'training'],
+    medical: [
+      'pharmacy', 'clinic', 'hospital', 'doctor', 'medicine', 'health',
+      'guardian', 'watsons', 'caring', 'alpro',  // Malaysian pharmacies
+      'klinik', 'farmasi',  // Malay terms
+    ],
+    lifestyle_books: [
+      'bookstore', 'book', 'mph', 'kinokuniya', 'popular',
+      'times', 'borders', 'pustaka',  // Malaysian bookstores
+    ],
+    lifestyle_tech: [
+      'apple', 'samsung', 'laptop', 'phone', 'computer', 'electronic',
+      'machines', 'senheng', 'courts', 'harvey norman',  // Malaysian electronics
+    ],
+    lifestyle_internet: [
+      'unifi', 'maxis', 'digi', 'celcom', 'broadband', 'internet',
+      'telekom', 'tm', 'yes', 'u mobile',  // Malaysian telcos
+    ],
+    sports_equip: [
+      'decathlon', 'sport', 'gym', 'fitness', 'nike', 'adidas',
+      'sukan',  // "Sports" in Malay
+    ],
+    education_self: [
+      'university', 'college', 'tuition', 'course', 'training',
+      'universiti', 'kolej', 'sekolah',  // Malay education terms
+    ],
   };
 
   for (const [category, keywords] of Object.entries(categoryKeywords)) {
