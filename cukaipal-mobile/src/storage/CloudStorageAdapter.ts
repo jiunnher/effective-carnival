@@ -130,7 +130,7 @@ export class CloudStorageAdapter extends NativeStorageAdapter {
    */
   getSyncStatus() {
     return {
-      isSync ing: this.syncInProgress,
+      isSyncing: this.syncInProgress,
       lastSyncTime: this.lastSyncTime,
     };
   }
