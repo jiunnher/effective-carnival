@@ -33,6 +33,8 @@ export interface OCRResult {
       height: number;
     };
   }[];
+  geminiCategory?: string; // Category suggested by Gemini (if used)
+  geminiCategoryConfidence?: string; // Confidence from Gemini
 }
 
 export interface ParsedReceipt {
@@ -40,7 +42,9 @@ export interface ParsedReceipt {
   date?: string;
   merchantName?: string;
   description?: string;
-  category?: string;
+  category?: string; // Deductible ID (e.g., 'medical_vax', 'sports_equip', 'lifestyle_books')
+  suggestedCategories?: string[]; // Alternative suggestions if uncertain
+  confidence?: 'high' | 'medium' | 'low'; // Classification confidence
   ocrMethod?: 'device' | 'cloud'; // Track which method was used
 }
 
@@ -112,17 +116,38 @@ async function extractTextWithGemini(imageUri: string): Promise<OCRResult> {
           {
             parts: [
               {
-                text: `Extract all text from this receipt image. Format the response as JSON with this structure:
+                text: `Extract all text from this Malaysian receipt image. Format the response as JSON with this structure:
 {
   "text": "full text extracted from receipt",
   "lines": ["line 1", "line 2", ...],
   "amount": extracted amount as number or null,
   "date": extracted date in YYYY-MM-DD format or null,
   "merchant": merchant/store name or null,
-  "items": ["item 1", "item 2", ...] or []
+  "items": ["item 1", "item 2", ...] or [],
+  "category": "deductible category ID" or null,
+  "categoryConfidence": "high" or "medium" or "low"
 }
 
-Focus on accuracy. If you cannot confidently extract a field, set it to null.`,
+For the category field, classify the receipt into one of these Malaysian tax deductible categories:
+- "medical_vax": Vaccination
+- "medical_dental": Dental treatment/exam
+- "medical_checkup": Medical checkup, screening, mental health
+- "medical_serious": Prescription medicine, serious disease treatment
+- "medical_fertility": Fertility treatment, IVF
+- "sports_equip": Sports equipment (shoes, bicycle, gym equipment)
+- "sports_training": Gym membership, personal training
+- "sports_facility": Sports facility rental
+- "lifestyle_books": Books, journals, magazines
+- "lifestyle_tech": Computer, smartphone, tablet
+- "lifestyle_internet": Internet bill, broadband
+- "education_self": University fees, courses, tuition
+
+Focus on the ITEMS purchased, not just the store name. For example:
+- Buying snacks at a pharmacy → null (not deductible)
+- Buying prescription medicine at pharmacy → "medical_serious"
+- Vaccination receipt → "medical_vax"
+
+If you cannot confidently classify the receipt, set category to null.`,
               },
               {
                 inline_data: {
@@ -162,6 +187,8 @@ Focus on accuracy. If you cannot confidently extract a field, set it to null.`,
       text: parsed.text || '',
       confidence: 0.98, // Gemini is typically very accurate
       lines: (parsed.lines || []).map((line: string) => ({ text: line })),
+      geminiCategory: parsed.category, // Category suggested by Gemini
+      geminiCategoryConfidence: parsed.categoryConfidence,
     };
   } catch (error) {
     console.error('[OCR] Gemini OCR failed:', error);
@@ -218,6 +245,193 @@ export async function extractTextFromImage(
       throw new Error('All OCR methods failed. Please try with a clearer image.');
     }
   }
+}
+
+/**
+ * Classify receipt into tax deductible categories
+ */
+function classifyReceipt(
+  text: string,
+  merchantName: string
+): { category?: string; suggested: string[]; confidence: 'high' | 'medium' | 'low' } {
+  const textLower = text.toLowerCase();
+  const merchantLower = merchantName.toLowerCase();
+  const suggested: string[] = [];
+
+  // Medical categories - most specific first
+
+  // Vaccination
+  if (
+    textLower.includes('vaccine') ||
+    textLower.includes('vaccination') ||
+    textLower.includes('immunisation') ||
+    textLower.includes('immunization') ||
+    textLower.includes('vaksin') ||  // Malay
+    textLower.includes('covid') ||
+    textLower.includes('flu shot')
+  ) {
+    return { category: 'medical_vax', suggested: [], confidence: 'high' };
+  }
+
+  // Dental
+  if (
+    textLower.includes('dental') ||
+    textLower.includes('dentist') ||
+    textLower.includes('tooth') ||
+    textLower.includes('teeth') ||
+    textLower.includes('gigi') ||  // Malay for tooth
+    textLower.includes('scaling') ||
+    textLower.includes('filling') ||
+    textLower.includes('extraction') ||
+    textLower.includes('braces') ||
+    textLower.includes('orthodontic')
+  ) {
+    return { category: 'medical_dental', suggested: [], confidence: 'high' };
+  }
+
+  // Medical checkup / mental health
+  if (
+    textLower.includes('checkup') ||
+    textLower.includes('check-up') ||
+    textLower.includes('screening') ||
+    textLower.includes('medical exam') ||
+    textLower.includes('mental health') ||
+    textLower.includes('psychiatr') ||
+    textLower.includes('psycholog') ||
+    textLower.includes('counselling') ||
+    textLower.includes('counseling')
+  ) {
+    return { category: 'medical_checkup', suggested: [], confidence: 'high' };
+  }
+
+  // Serious disease / fertility
+  if (
+    textLower.includes('chemotherapy') ||
+    textLower.includes('dialysis') ||
+    textLower.includes('ivf') ||
+    textLower.includes('fertility') ||
+    textLower.includes('cancer') ||
+    textLower.includes('kidney') ||
+    textLower.includes('oncology')
+  ) {
+    const category = textLower.includes('fertility') || textLower.includes('ivf')
+      ? 'medical_fertility'
+      : 'medical_serious';
+    return { category, suggested: [], confidence: 'high' };
+  }
+
+  // General medical (clinic, hospital, pharmacy items)
+  const medicalStores = [
+    'guardian', 'watsons', 'caring', 'alpro', 'pharmacy', 'farmasi',
+    'clinic', 'klinik', 'hospital', 'poliklinik'
+  ];
+  const medicalItems = [
+    'prescription', 'medicine', 'ubat', 'tablet', 'capsule', 'syrup',
+    'antibiotic', 'panadol', 'paracetamol', 'ibuprofen'
+  ];
+
+  const isMedicalStore = medicalStores.some(store => merchantLower.includes(store));
+  const hasMedicalItems = medicalItems.some(item => textLower.includes(item));
+
+  if (isMedicalStore || hasMedicalItems) {
+    // Medical store but could be various medical items
+    suggested.push('medical_vax', 'medical_checkup', 'medical_dental');
+    return { category: 'medical_serious', suggested, confidence: 'medium' };
+  }
+
+  // Sports categories
+
+  // Sports equipment
+  const sportsEquipmentItems = [
+    'running shoe', 'sport shoe', 'kasut sukan', 'sneaker',
+    'bicycle', 'basikal', 'treadmill', 'dumbbell', 'barbell',
+    'yoga mat', 'resistance band', 'kettlebell', 'tennis racket',
+    'badminton racket', 'football', 'basketball', 'swimming goggle'
+  ];
+
+  if (sportsEquipmentItems.some(item => textLower.includes(item))) {
+    return { category: 'sports_equip', suggested: [], confidence: 'high' };
+  }
+
+  // Sports stores
+  const sportsStores = ['decathlon', 'sport', 'nike', 'adidas', 'sukan'];
+  if (sportsStores.some(store => merchantLower.includes(store))) {
+    suggested.push('sports_equip', 'sports_facility');
+    return { category: 'sports_equip', suggested, confidence: 'medium' };
+  }
+
+  // Gym membership / training
+  if (
+    textLower.includes('gym membership') ||
+    textLower.includes('fitness membership') ||
+    textLower.includes('personal training') ||
+    textLower.includes('coach') ||
+    merchantLower.includes('gym') ||
+    merchantLower.includes('fitness')
+  ) {
+    return { category: 'sports_training', suggested: [], confidence: 'high' };
+  }
+
+  // Lifestyle categories
+
+  // Books & journals
+  const bookStores = ['mph', 'kinokuniya', 'popular', 'times', 'borders', 'pustaka', 'bookstore'];
+  const bookItems = ['book', 'buku', 'journal', 'magazine', 'novel', 'textbook'];
+
+  if (
+    bookStores.some(store => merchantLower.includes(store)) ||
+    bookItems.some(item => textLower.includes(item))
+  ) {
+    return { category: 'lifestyle_books', suggested: [], confidence: 'high' };
+  }
+
+  // Tech products (PC, smartphone, tablet)
+  const techStores = ['machines', 'senheng', 'courts', 'harvey norman', 'apple', 'samsung'];
+  const techItems = [
+    'laptop', 'notebook', 'computer', 'pc', 'macbook',
+    'iphone', 'smartphone', 'phone', 'telefon',
+    'ipad', 'tablet', 'galaxy tab'
+  ];
+
+  if (
+    techStores.some(store => merchantLower.includes(store)) ||
+    techItems.some(item => textLower.includes(item))
+  ) {
+    return { category: 'lifestyle_tech', suggested: [], confidence: 'high' };
+  }
+
+  // Internet bill
+  const telcos = ['unifi', 'maxis', 'digi', 'celcom', 'telekom', 'tm', 'yes', 'u mobile', 'time'];
+  const internetKeywords = ['broadband', 'internet bill', 'fibre', 'wifi', 'data plan'];
+
+  if (
+    telcos.some(telco => merchantLower.includes(telco)) ||
+    internetKeywords.some(keyword => textLower.includes(keyword))
+  ) {
+    return { category: 'lifestyle_internet', suggested: [], confidence: 'high' };
+  }
+
+  // Education categories
+
+  // Self education
+  const educationInstitutions = [
+    'university', 'universiti', 'college', 'kolej',
+    'institute', 'institut', 'academy', 'akademi'
+  ];
+  const educationItems = [
+    'tuition', 'course fee', 'yuran', 'semester',
+    'registration fee', 'exam fee', 'matriculation'
+  ];
+
+  if (
+    educationInstitutions.some(inst => merchantLower.includes(inst)) ||
+    educationItems.some(item => textLower.includes(item))
+  ) {
+    return { category: 'education_self', suggested: [], confidence: 'high' };
+  }
+
+  // If no category matched, return low confidence with suggestions
+  return { category: undefined, suggested: [], confidence: 'low' };
 }
 
 /**
@@ -335,39 +549,25 @@ export function parseReceiptText(ocrResult: OCRResult): ParsedReceipt {
     }
   }
 
-  // Category detection - Malaysian stores and keywords
-  const categoryKeywords = {
-    medical: [
-      'pharmacy', 'clinic', 'hospital', 'doctor', 'medicine', 'health',
-      'guardian', 'watsons', 'caring', 'alpro',  // Malaysian pharmacies
-      'klinik', 'farmasi',  // Malay terms
-    ],
-    lifestyle_books: [
-      'bookstore', 'book', 'mph', 'kinokuniya', 'popular',
-      'times', 'borders', 'pustaka',  // Malaysian bookstores
-    ],
-    lifestyle_tech: [
-      'apple', 'samsung', 'laptop', 'phone', 'computer', 'electronic',
-      'machines', 'senheng', 'courts', 'harvey norman',  // Malaysian electronics
-    ],
-    lifestyle_internet: [
-      'unifi', 'maxis', 'digi', 'celcom', 'broadband', 'internet',
-      'telekom', 'tm', 'yes', 'u mobile',  // Malaysian telcos
-    ],
-    sports_equip: [
-      'decathlon', 'sport', 'gym', 'fitness', 'nike', 'adidas',
-      'sukan',  // "Sports" in Malay
-    ],
-    education_self: [
-      'university', 'college', 'tuition', 'course', 'training',
-      'universiti', 'kolej', 'sekolah',  // Malay education terms
-    ],
-  };
+  // Category classification
+  // Prefer Gemini's classification if available and confident
+  if (ocrResult.geminiCategory && ocrResult.geminiCategoryConfidence === 'high') {
+    parsed.category = ocrResult.geminiCategory;
+    parsed.confidence = 'high';
+    parsed.suggestedCategories = [];
+  } else {
+    // Use keyword-based classification
+    const classification = classifyReceipt(text, parsed.merchantName || '');
+    parsed.category = classification.category;
+    parsed.suggestedCategories = classification.suggested;
+    parsed.confidence = classification.confidence;
 
-  for (const [category, keywords] of Object.entries(categoryKeywords)) {
-    if (keywords.some(keyword => text.includes(keyword))) {
-      parsed.category = category;
-      break;
+    // If both available, add Gemini's suggestion if different
+    if (ocrResult.geminiCategory && ocrResult.geminiCategory !== parsed.category) {
+      parsed.suggestedCategories = [
+        ocrResult.geminiCategory,
+        ...parsed.suggestedCategories
+      ];
     }
   }
 
